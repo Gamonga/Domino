@@ -1,0 +1,371 @@
+import * as THREE from 'three';
+import { Rng } from '../core/rng';
+
+// Texturas 100% procedurais (canvas). Nada de imagem externa.
+function canvas(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  return [c, c.getContext('2d')!];
+}
+
+function tex(c: HTMLCanvasElement, repeat = 1, srgb = true): THREE.CanvasTexture {
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(repeat, repeat);
+  t.anisotropy = 8;
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+const PIP_POS: number[][][] = [
+  [],
+  [[0.5, 0.5]],
+  [[0.27, 0.27], [0.73, 0.73]],
+  [[0.25, 0.25], [0.5, 0.5], [0.75, 0.75]],
+  [[0.28, 0.28], [0.72, 0.28], [0.28, 0.72], [0.72, 0.72]],
+  [[0.26, 0.26], [0.74, 0.26], [0.5, 0.5], [0.26, 0.74], [0.74, 0.74]],
+  [[0.28, 0.22], [0.72, 0.22], [0.28, 0.5], [0.72, 0.5], [0.28, 0.78], [0.72, 0.78]],
+];
+
+/** Atlas 9 células: 0–6 pips, 7 = chevron (foguete), 8 = bomba (explosiva). Branco sobre transparente. */
+export const ATLAS_CELLS = 9;
+let atlasTex: THREE.CanvasTexture | null = null;
+export function pipAtlas(): THREE.CanvasTexture {
+  if (atlasTex) return atlasTex;
+  const S = 128;
+  const [c, g] = canvas(S * ATLAS_CELLS, S);
+  g.fillStyle = '#fff';
+  g.strokeStyle = '#fff';
+  for (let i = 0; i <= 6; i++) {
+    for (const [x, y] of PIP_POS[i]) {
+      g.beginPath();
+      g.arc(i * S + x * S, y * S, S * 0.085, 0, Math.PI * 2);
+      g.fill();
+    }
+    // meia linha divisória (as duas metades formam a linha central)
+    g.fillRect(i * S + S * 0.12, 0, S * 0.76, S * 0.025);
+  }
+  // chevron
+  g.lineWidth = S * 0.11; g.lineCap = 'round'; g.lineJoin = 'round';
+  for (const oy of [0.35, 0.62]) {
+    g.beginPath();
+    g.moveTo(7 * S + S * 0.22, S * (oy + 0.15));
+    g.lineTo(7 * S + S * 0.5, S * (oy - 0.08));
+    g.lineTo(7 * S + S * 0.78, S * (oy + 0.15));
+    g.stroke();
+  }
+  // bomba
+  g.beginPath(); g.arc(8 * S + S * 0.47, S * 0.58, S * 0.24, 0, Math.PI * 2); g.fill();
+  g.lineWidth = S * 0.06;
+  g.beginPath(); g.moveTo(8 * S + S * 0.6, S * 0.38); g.quadraticCurveTo(8 * S + S * 0.7, S * 0.2, 8 * S + S * 0.82, S * 0.22); g.stroke();
+  atlasTex = new THREE.CanvasTexture(c);
+  atlasTex.colorSpace = THREE.SRGBColorSpace;
+  atlasTex.anisotropy = 8;
+  return atlasTex;
+}
+
+/** Pano velho e manchado da mesa (verde-acinzentado quase preto, manchas de vinho e queimado). */
+export function feltTexture(): THREE.CanvasTexture {
+  const S = 1024;
+  const [c, g] = canvas(S, S);
+  g.fillStyle = '#2a2f27';
+  g.fillRect(0, 0, S, S);
+  const r = new Rng(7);
+  // manchas grandes e suaves (tileable: desenha cada mancha nos 4 quadrantes vizinhos)
+  const blot = (x: number, y: number, rad: number, col: string, a: number) => {
+    for (const ox of [-S, 0, S]) for (const oy of [-S, 0, S]) {
+      const grd = g.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, rad);
+      grd.addColorStop(0, col.replace('A', String(a)));
+      grd.addColorStop(1, col.replace('A', '0'));
+      g.fillStyle = grd;
+      g.fillRect(x + ox - rad, y + oy - rad, rad * 2, rad * 2);
+    }
+  };
+  for (let i = 0; i < 26; i++) blot(r.float() * S, r.float() * S, 60 + r.float() * 180, 'rgba(8,10,8,A)', 0.35 + r.float() * 0.3);
+  for (let i = 0; i < 7; i++) blot(r.float() * S, r.float() * S, 30 + r.float() * 70, 'rgba(70,18,14,A)', 0.25 + r.float() * 0.2);
+  for (let i = 0; i < 10; i++) blot(r.float() * S, r.float() * S, 40 + r.float() * 90, 'rgba(90,96,70,A)', 0.12);
+  const img = g.getImageData(0, 0, S, S);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const n = (r.float() - 0.5) * 18;
+    img.data[i] += n; img.data[i + 1] += n; img.data[i + 2] += n;
+  }
+  g.putImageData(img, 0, 0);
+  // fibras
+  g.globalAlpha = 0.06;
+  for (let i = 0; i < 5000; i++) {
+    g.strokeStyle = r.chance(0.5) ? '#8a9a80' : '#050605';
+    g.beginPath();
+    const x = r.float() * S, y = r.float() * S, a = r.float() * Math.PI;
+    g.moveTo(x, y); g.lineTo(x + Math.cos(a) * 7, y + Math.sin(a) * 7); g.stroke();
+  }
+  g.globalAlpha = 1;
+  return tex(c, 1);
+}
+
+/** Verso de carta velha (props da mesa). */
+export function cardBackTexture(): THREE.CanvasTexture {
+  const W = 128, H = 192;
+  const [c, g] = canvas(W, H);
+  g.fillStyle = '#c2b28c';
+  g.fillRect(0, 0, W, H);
+  g.strokeStyle = '#3a2416';
+  g.lineWidth = 5;
+  g.strokeRect(8, 8, W - 16, H - 16);
+  g.lineWidth = 2;
+  g.strokeRect(16, 16, W - 32, H - 32);
+  // olho no centro
+  g.beginPath(); g.ellipse(W / 2, H / 2, 30, 16, 0, 0, Math.PI * 2); g.stroke();
+  g.fillStyle = '#3a2416';
+  g.beginPath(); g.arc(W / 2, H / 2, 9, 0, Math.PI * 2); g.fill();
+  const r = new Rng(13);
+  g.globalAlpha = 0.25;
+  for (let i = 0; i < 40; i++) { g.fillStyle = r.chance(0.5) ? '#5a3a22' : '#e8dcc0'; g.beginPath(); g.arc(r.float() * W, r.float() * H, 2 + r.float() * 9, 0, Math.PI * 2); g.fill(); }
+  g.globalAlpha = 1;
+  return tex(c, 1);
+}
+
+/** Grade sutil de 1 m sobre o feltro (leitura de distância). */
+export function gridTexture(w: number, d: number): THREE.CanvasTexture {
+  const px = 64;
+  const [c, g] = canvas(w * px, d * px);
+  g.clearRect(0, 0, c.width, c.height);
+  g.strokeStyle = 'rgba(230,210,180,0.035)';
+  g.lineWidth = 2;
+  for (let x = 0; x <= w; x++) { g.beginPath(); g.moveTo(x * px, 0); g.lineTo(x * px, c.height); g.stroke(); }
+  for (let z = 0; z <= d; z++) { g.beginPath(); g.moveTo(0, z * px); g.lineTo(c.width, z * px); g.stroke(); }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
+export function woodTexture(base = '#3a2416', dark = '#160b05', seed = 3): THREE.CanvasTexture {
+  const W = 1024, H = 256;
+  const [c, g] = canvas(W, H);
+  g.fillStyle = base;
+  g.fillRect(0, 0, W, H);
+  const r = new Rng(seed);
+  // tábuas
+  const planks = 4;
+  for (let p = 0; p < planks; p++) {
+    const y0 = (p * H) / planks;
+    g.fillStyle = `rgba(0,0,0,${0.05 + r.float() * 0.12})`;
+    g.fillRect(0, y0, W, H / planks);
+    for (let i = 0; i < 40; i++) {
+      g.strokeStyle = dark;
+      g.globalAlpha = 0.08 + r.float() * 0.18;
+      g.lineWidth = 1 + r.float() * 2.5;
+      const y = y0 + r.float() * (H / planks);
+      g.beginPath();
+      g.moveTo(0, y);
+      for (let x = 0; x <= W; x += 32) g.lineTo(x, y + Math.sin(x * 0.01 + i) * (2 + r.float() * 3));
+      g.stroke();
+    }
+    g.globalAlpha = 0.6;
+    g.fillStyle = dark;
+    g.fillRect(0, y0, W, 2);
+    // nós
+    for (let k = 0; k < 2; k++) {
+      g.globalAlpha = 0.25;
+      g.beginPath();
+      g.ellipse(r.float() * W, y0 + r.float() * (H / planks), 10 + r.float() * 12, 4 + r.float() * 4, 0, 0, Math.PI * 2);
+      g.fill();
+    }
+  }
+  g.globalAlpha = 1;
+  return tex(c, 1);
+}
+
+/**
+ * Madeira crua de marionete, velha: veio claro, sujeira nas bordas, arranhões, amassados, rachaduras finas
+ * e restos de tinta descascada. Devolve a cor e o relevo (bumpMap) desenhados com os mesmos traços.
+ */
+let wornWoodCache: { map: THREE.CanvasTexture; bump: THREE.CanvasTexture } | null = null;
+export function wornWoodTextures(): { map: THREE.CanvasTexture; bump: THREE.CanvasTexture } {
+  if (wornWoodCache) return wornWoodCache;
+  const S = 512;
+  const [c, g] = canvas(S, S);
+  const [cb, b] = canvas(S, S);
+  const r = new Rng(21);
+  g.fillStyle = '#7e6448';
+  g.fillRect(0, 0, S, S);
+  b.fillStyle = '#808080';
+  b.fillRect(0, 0, S, S);
+  // veio: faixas onduladas ao longo de X (claras e escuras), repetidas nas bordas para emendar
+  for (let i = 0; i < 90; i++) {
+    const y = r.float() * S, amp = 2 + r.float() * 6, waves = 1 + Math.floor(r.float() * 4), ph = r.float() * 6;
+    const dark = r.chance(0.6);
+    g.strokeStyle = dark ? '#3e2814' : '#b8946a';
+    g.globalAlpha = dark ? 0.12 + r.float() * 0.22 : 0.08 + r.float() * 0.12;
+    g.lineWidth = 0.8 + r.float() * 3;
+    b.strokeStyle = dark ? '#6a6a6a' : '#949494';
+    b.globalAlpha = 0.5;
+    b.lineWidth = g.lineWidth;
+    for (const oy of [-S, 0, S]) {
+      g.beginPath(); b.beginPath();
+      for (let x = 0; x <= S; x += 8) {
+        const yy = y + oy + Math.sin((x / S) * Math.PI * 2 * waves + ph) * amp;
+        if (x === 0) { g.moveTo(x, yy); b.moveTo(x, yy); } else { g.lineTo(x, yy); b.lineTo(x, yy); }
+      }
+      g.stroke(); b.stroke();
+    }
+  }
+  // nós da madeira
+  for (let i = 0; i < 4; i++) {
+    const x = r.float() * S, y = r.float() * S, rx = 8 + r.float() * 14;
+    for (let k = 4; k >= 1; k--) {
+      g.globalAlpha = 0.18; g.fillStyle = '#2e1c0c';
+      g.beginPath(); g.ellipse(x, y, rx * k / 4 * 1.8, rx * k / 4 * 0.7, 0, 0, Math.PI * 2); g.fill();
+    }
+  }
+  // sujeira/encardido em manchas grandes (o manuseio escureceu a madeira)
+  for (let i = 0; i < 22; i++) {
+    const x = r.float() * S, y = r.float() * S, rad = 30 + r.float() * 110;
+    for (const ox of [-S, 0, S]) for (const oy of [-S, 0, S]) {
+      const grd = g.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, rad);
+      grd.addColorStop(0, `rgba(30,18,8,${0.18 + r.float() * 0.2})`);
+      grd.addColorStop(1, 'rgba(30,18,8,0)');
+      g.globalAlpha = 1; g.fillStyle = grd;
+      g.fillRect(x + ox - rad, y + oy - rad, rad * 2, rad * 2);
+    }
+  }
+  // restos de tinta velha (creme e vermelho desbotado), em lascas irregulares com borda escura
+  const flake = (x: number, y: number, rad: number, col: string) => {
+    g.globalAlpha = 0.6; g.fillStyle = col;
+    b.globalAlpha = 1; b.fillStyle = '#a0a0a0';
+    g.beginPath(); b.beginPath();
+    const n = 9;
+    for (let k = 0; k <= n; k++) {
+      const a = (k / n) * Math.PI * 2, rr = rad * (0.55 + r.float() * 0.6);
+      const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr * 0.7;
+      if (k === 0) { g.moveTo(px, py); b.moveTo(px, py); } else { g.lineTo(px, py); b.lineTo(px, py); }
+    }
+    g.fill(); b.fill();
+    g.globalAlpha = 0.5; g.strokeStyle = '#2a1a0c'; g.lineWidth = 1.2; g.stroke();
+  };
+  for (let i = 0; i < 9; i++) flake(r.float() * S, r.float() * S, 5 + r.float() * 14, r.chance(0.7) ? '#a8977a' : '#6e3428');
+  // arranhões (claros na cor, fundos no relevo)
+  for (let i = 0; i < 160; i++) {
+    const x = r.float() * S, y = r.float() * S, a = (r.float() - 0.5) * 1.2 + (r.chance(0.5) ? 0 : Math.PI / 2), len = 6 + r.float() * 40;
+    g.globalAlpha = 0.15 + r.float() * 0.25; g.strokeStyle = r.chance(0.7) ? '#d8bb92' : '#24160a'; g.lineWidth = 0.6 + r.float();
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); g.stroke();
+    b.globalAlpha = 0.6; b.strokeStyle = '#505050'; b.lineWidth = g.lineWidth;
+    b.beginPath(); b.moveTo(x, y); b.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); b.stroke();
+  }
+  // rachaduras compridas no sentido do veio (pretas e fundas)
+  for (let i = 0; i < 7; i++) {
+    let x = r.float() * S, y = r.float() * S;
+    const steps = 10 + Math.floor(r.float() * 18);
+    g.globalAlpha = 0.85; g.strokeStyle = '#120a04'; b.globalAlpha = 1; b.strokeStyle = '#101010';
+    let w = 2.4;
+    g.beginPath(); b.beginPath(); g.moveTo(x, y); b.moveTo(x, y);
+    for (let k = 0; k < steps; k++) {
+      x += 6 + r.float() * 10; y += (r.float() - 0.5) * 6;
+      g.lineTo(x, y); b.lineTo(x, y);
+    }
+    g.lineWidth = w; b.lineWidth = w * 1.6; g.stroke(); b.stroke();
+    w *= 0.5;
+  }
+  // grão fino
+  const img = g.getImageData(0, 0, S, S);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const n = (r.float() - 0.5) * 14;
+    img.data[i] += n; img.data[i + 1] += n; img.data[i + 2] += n;
+  }
+  g.putImageData(img, 0, 0);
+  g.globalAlpha = 1; b.globalAlpha = 1;
+  wornWoodCache = { map: tex(c, 1), bump: tex(cb, 1, false) };
+  return wornWoodCache;
+}
+
+export function stoneTexture(): THREE.CanvasTexture {
+  const S = 256;
+  const [c, g] = canvas(S, S);
+  g.fillStyle = '#7d7a76';
+  g.fillRect(0, 0, S, S);
+  const r = new Rng(11);
+  const rows = 4;
+  for (let row = 0; row < rows; row++) {
+    const h = S / rows;
+    let x = row % 2 ? -h * 0.6 : 0;
+    while (x < S) {
+      const w = h * (1.1 + r.float() * 0.8);
+      const l = 95 + Math.floor(r.float() * 50);
+      g.fillStyle = `rgb(${l},${l - 3},${l - 8})`;
+      g.fillRect(x + 3, row * h + 3, w - 6, h - 6);
+      g.fillStyle = 'rgba(255,255,255,0.08)';
+      g.fillRect(x + 3, row * h + 3, w - 6, 4);
+      x += w;
+    }
+  }
+  return tex(c, 1);
+}
+
+/** Arbusto morto: folhas secas marrom-acinzentadas + galhos e espinhos. */
+export function hedgeTexture(): THREE.CanvasTexture {
+  const S = 256;
+  const [c, g] = canvas(S, S);
+  g.fillStyle = '#1f1a13';
+  g.fillRect(0, 0, S, S);
+  const r = new Rng(5);
+  for (let i = 0; i < 900; i++) {
+    const l = r.float();
+    g.fillStyle = l < 0.35 ? '#120e0a' : l < 0.75 ? '#3a3022' : l < 0.95 ? '#57492f' : '#4a5233';
+    g.beginPath();
+    g.ellipse(r.float() * S, r.float() * S, 3 + r.float() * 5, 1.5 + r.float() * 2.5, r.float() * Math.PI, 0, Math.PI * 2);
+    g.fill();
+  }
+  // galhos secos
+  g.strokeStyle = '#0d0a07';
+  g.lineCap = 'round';
+  for (let i = 0; i < 26; i++) {
+    let x = r.float() * S, y = r.float() * S, a = r.float() * Math.PI * 2;
+    g.lineWidth = 1.5 + r.float() * 2;
+    g.beginPath(); g.moveTo(x, y);
+    for (let k = 0; k < 4; k++) {
+      a += (r.float() - 0.5) * 1.2;
+      const nx = x + Math.cos(a) * 14, ny = y + Math.sin(a) * 14;
+      g.lineTo(nx, ny);
+      // espinho
+      g.moveTo(nx, ny); g.lineTo(nx + Math.cos(a + 1.4) * 5, ny + Math.sin(a + 1.4) * 5); g.moveTo(nx, ny);
+      x = nx; y = ny;
+    }
+    g.stroke();
+  }
+  return tex(c, 1);
+}
+
+/** Caixote de madeira podre: tábuas escuras, musgo e rachaduras. */
+export function crateTexture(): THREE.CanvasTexture {
+  const S = 256;
+  const [c, g] = canvas(S, S);
+  g.drawImage(woodTexture('#4a3a28', '#1c140b', 9).image as HTMLCanvasElement, 0, 0, S, S);
+  const r = new Rng(17);
+  // musgo e mofo
+  for (let i = 0; i < 60; i++) {
+    g.fillStyle = `rgba(${50 + r.float() * 30},${70 + r.float() * 30},${30 + r.float() * 20},${0.15 + r.float() * 0.25})`;
+    g.beginPath(); g.arc(r.float() * S, S - r.float() * r.float() * S, 3 + r.float() * 10, 0, Math.PI * 2); g.fill();
+  }
+  g.strokeStyle = '#1a0f07';
+  g.lineWidth = 18;
+  g.strokeRect(9, 9, S - 18, S - 18);
+  g.beginPath(); g.moveTo(9, 9); g.lineTo(S - 9, S - 9); g.stroke();
+  // pregos enferrujados
+  g.fillStyle = '#5a3018';
+  for (const [x, y] of [[9, 9], [S - 9, 9], [9, S - 9], [S - 9, S - 9]]) { g.beginPath(); g.arc(x, y, 4, 0, Math.PI * 2); g.fill(); }
+  return tex(c, 1);
+}
+
+export function softDot(): THREE.CanvasTexture {
+  const S = 64;
+  const [c, g] = canvas(S, S);
+  const grd = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  grd.addColorStop(0, 'rgba(255,255,255,1)');
+  grd.addColorStop(0.4, 'rgba(255,255,255,0.55)');
+  grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, S, S);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
